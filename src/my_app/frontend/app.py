@@ -24,7 +24,7 @@ class StreamlitApp:
     def setup_page_config(self):
         """设置页面配置"""
         st.set_page_config(
-            page_title="AI Vision System",
+            page_title="AI的目标检测系统",
             page_icon="🎯",
             layout="wide",
             initial_sidebar_state="expanded"
@@ -36,11 +36,11 @@ class StreamlitApp:
         <style>
         /* 主题颜色 */
         :root {
-            --primary-bg: #0B1121;
-            --secondary-bg: #162447;
-            --accent-color: #1E88E5;
-            --text-color: #E0E0E0;
-            --card-bg: #1A1F35;
+            --primary-bg: #FEFCE8;
+            --secondary-bg: #FFFFFF;
+            --accent-color: #F59E0B;
+            --text-color: #1F2937;
+            --card-bg: #FEF3C7;
         }
         
         /* 全局样式 */
@@ -189,9 +189,9 @@ class StreamlitApp:
         
         # 创建标签页
         tabs = st.tabs([
-            "🎥 Real-time Detection",
-            "🖼️ Image Analysis",
-            "📊 Analytics Dashboard"
+            "🎥 视频目标检测",
+            "🖼️ 图片分析",
+            "📊 分析大屏"
         ])
         
         with tabs[0]:
@@ -205,9 +205,9 @@ class StreamlitApp:
         """渲染页面头部"""
         st.markdown("""
         <div style="text-align: center; padding: 2rem 0;">
-            <h1>AI Vision System</h1>
+            <h1>AI的目标检测</h1>
             <p style="color: #64B5F6; font-size: 1.2rem;">
-                Advanced Object Detection & Analytics
+                目标检测及分析
             </p>
         </div>
         """, unsafe_allow_html=True)
@@ -226,67 +226,67 @@ class StreamlitApp:
 
     def render_realtime_detection(self):
         """渲染实时检测页面"""
-        col1, col2 = st.columns([7, 3])
+        col1, col2 = st.columns([6, 4])
         
         with col1:
             st.markdown('<div class="card">', unsafe_allow_html=True)
             video_placeholder = st.empty()
-            
+            video_placeholder.write("导入文件")
             # 添加状态指示器
             if st.session_state.running:
                 st.markdown("""
                     <div style="text-align: center; color: #1E88E5;">
-                        🔴 Detection Running
+                        🔴 正在录制
                     </div>
                 """, unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
-        
+
         with col2:
             st.markdown('<div class="card">', unsafe_allow_html=True)
-            st.markdown("### Control Panel")
+            st.markdown("### 控制界面")
             source = st.radio(
                 "Select Input Source",
-                ["📹 Camera", "📁 Video File"],
+                ["📹 摄像头", "📁 视频文件"],
                 key="source_select"
             )
-            
-            if source == "📹 Camera":
-                camera_id = st.selectbox("Select Camera", [0, 1, 2])
+
+            if source == "📹 摄像头":
+                camera_id = st.selectbox("选择通道", [0, 1, 2])
                 self.run_camera_detection(camera_id, video_placeholder)
             else:
                 st.markdown('<div class="uploadfile">', unsafe_allow_html=True)
                 video_file = st.file_uploader(
-                    "Drop your video file here",
+                    "拖拽文件到此",
                     type=['mp4', 'avi', 'mov']
                 )
                 st.markdown('</div>', unsafe_allow_html=True)
-                
+
                 if video_file:
                     self.run_video_detection(video_file, video_placeholder)
-                    
+
             st.markdown('</div>', unsafe_allow_html=True)
 
     def render_image_detection(self):
         """渲染图片检测页面"""
         st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.markdown("### Image Analysis")
+        st.markdown("### 图片分析")
         
-        upload_col, preview_col = st.columns(2)
+        upload_col, preview_col = st.columns([3,7])
         
         with upload_col:
             st.markdown('<div class="uploadfile">', unsafe_allow_html=True)
             uploaded_file = st.file_uploader(
-                "Drop your image here",
+                "拖拽文件到此",
                 type=['jpg', 'jpeg', 'png']
             )
             st.markdown('</div>', unsafe_allow_html=True)
             
         if uploaded_file:
             image = Image.open(uploaded_file)
-            preview_col.image(image, caption="Preview", use_column_width=True)
+            preview_col.image(image, caption="Preview", use_container_width=True)
             
-            if st.button("🔍 Analyze Image"):
-                with st.spinner("Processing..."):
+            if st.button("🔍 分析文件"):
+                with st.spinner("分析中..."):
                     result_image = self.process_image(uploaded_file)
                     st.image(result_image, caption="Detection Result")
         
@@ -301,26 +301,26 @@ class StreamlitApp:
             col1, col2, col3 = st.columns(3)
             with col1:
                 self.render_metric_card(
-                    "Total Frames",
+                    "总计画幅",
                     metrics['total_frames'],
                     "🎞️"
                 )
             with col2:
                 self.render_metric_card(
-                    "Average FPS",
+                    "平均帧率",
                     f"{metrics['average_fps']:.1f}",
                     "⚡"
                 )
             with col3:
                 self.render_metric_card(
-                    "Objects Detected",
+                    "检测目标",
                     metrics['total_detections'],
                     "🎯"
                 )
             
             # 显示图表
             st.markdown('<div class="card">', unsafe_allow_html=True)
-            st.markdown("### Detection Distribution")
+            st.markdown("### 目标分类")
             if metrics['class_distribution']:
                 chart_data = pd.DataFrame.from_dict(
                     metrics['class_distribution'],
@@ -355,9 +355,9 @@ class StreamlitApp:
         col1, col2 = st.columns(2)
         
         with col1:
-            start_button = st.button("▶️ Start")
+            start_button = st.button("▶️ 开始")
         with col2:
-            stop_button = st.button("⏹️ Stop")
+            stop_button = st.button("⏹️ 结束")
             
         if start_button:
             st.session_state.running = True
@@ -398,9 +398,9 @@ class StreamlitApp:
         col1, col2 = st.columns(2)
         
         with col1:
-            start_button = st.button("▶️ Start")
+            start_button = st.button("▶️ 开始")
         with col2:
-            stop_button = st.button("⏹️ Stop")
+            stop_button = st.button("⏹️ 结束")
             
         if start_button:
             st.session_state.running = True

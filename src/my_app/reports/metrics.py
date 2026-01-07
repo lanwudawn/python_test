@@ -6,14 +6,14 @@ class DetectionMetrics:
         self.reset()
         
     def reset(self):
-        """重置所有指标"""
+        """重置所有指标参数"""
         self.total_frames = 0
         self.total_detections = 0
         self.processing_times = []
         self.class_counts = defaultdict(int)
         
     def update(self, detections, processing_time):
-        """更新检测指标"""
+        """更新检测指标参数"""
         self.total_frames += 1
         self.total_detections += len(detections)
         self.processing_times.append(processing_time)
@@ -23,7 +23,7 @@ class DetectionMetrics:
             self.class_counts[cls_id] += 1
             
     def get_summary(self):
-        """获取指标总结"""
+        """返回指标总结"""
         avg_fps = 1.0 / np.mean(self.processing_times) if self.processing_times else 0
         return {
             "total_frames": self.total_frames,

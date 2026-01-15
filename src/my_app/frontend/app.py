@@ -17,12 +17,16 @@ from ..reports.metrics import DetectionMetrics
 import altair as alt
 
 @st.cache_resource
-def load_cached_model(config):
-    """
-    使用 cache_resource 缓存模型实例。
-    Streamlit 会检测 config 是否变化，只有变化时才会重新加载。
-    """
-    print("Loading model...")  # 调试用，你会发现它只打印一次
+def load_cached_model(model_name, model_type, weights_path):
+    # 构造 config 字典传给 YOLOModel
+    config = {
+        'name': model_name,
+        'type': model_type,
+        'weights': weights_path,
+        'confidence_threshold': 0.5,
+        'iou_threshold': 0.45,
+        'classes_path': 'config/coco_classes.txt' # 备用
+    }
     return YOLOModel(config)
 
 
@@ -35,8 +39,12 @@ class StreamlitApp:
         self.initialize_session_state()
 
     def get_model(self):
-        """获取缓存的模型的辅助方法"""
-        return load_cached_model(self.config['model'])
+        """根据 Sidebar 的选择获取模型"""
+        return load_cached_model(
+            self.current_model_name, 
+            self.current_model_config['type'], 
+            self.current_model_config['path']
+        )
 
     def process_image(self, image_file):
         """处理单张图片"""
@@ -210,17 +218,39 @@ class StreamlitApp:
 
     def initialize_session_state(self):
         """初始化会话状态"""
-        if 'model' not in st.session_state:
-            st.session_state.model = None
+
         if 'metrics' not in st.session_state:
             st.session_state.metrics = DetectionMetrics()
+
         if 'running' not in st.session_state:
             st.session_state.running = False
+
+        if 'model_history' not in st.session_state:
+            st.session_state.model_history = {}
+
 
     def run(self):
         """运行Streamlit应用"""
         self.render_header()
         
+        st.sidebar.title("🛠️ 模型设置")
+
+        model_options = {
+            "YOLOv5 (快速)": {"type": "v5", "path": "weights/yolov5s.pt"},
+            "YOLOv8 (平衡)": {"type": "v8", "path": "weights/yolov8n.pt"},
+            "YOLOv11 (进阶)": {"type": "v11", "path": "weights/yolo11n.pt"},
+        }
+
+        selected_model_name = st.sidebar.selectbox(
+            "选择检测模型", 
+            list(model_options.keys())
+        )
+
+        self.current_model_config = model_options[selected_model_name]
+        self.current_model_name = selected_model_name
+
+        st.sidebar.title("导航")
+
         # 创建标签页
         tabs = st.tabs([
             "🎥 视频目标检测",
@@ -327,71 +357,148 @@ class StreamlitApp:
         st.markdown('</div>', unsafe_allow_html=True)
 
     def render_analytics(self):
-        """渲染分析页面（使用 Altair 优化图表）"""
-        if 'metrics' not in st.session_state or not st.session_state.metrics:
-            st.info("暂无数据，请先运行检测。")
-            return
-
-        metrics = st.session_state.metrics.get_summary()
+        """渲染分析页面：包含当前会话详情 + 模型竞技场对比"""
+        st.title("📊 分析大屏")
         
-        # 显示关键指标卡片
-        st.markdown('<div class="card">', unsafe_allow_html=True)
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("总计帧数", metrics['total_frames'])
-        with col2:
-            # 🟢 修正：使用 'average_fps' 而不是 'fps'
-            st.metric("平均帧率", f"{metrics['average_fps']:.1f} FPS")
-        with col3:
-            st.metric("检测目标", metrics['total_detections'])
-        st.markdown('</div>', unsafe_allow_html=True)
+        # ==========================================
+        # 1️⃣ 第一部分：当前模型会话分析
+        # ==========================================
+        # 增加安全检查，防止 current_model_name 未定义
+        current_name = getattr(self, 'current_model_name', '未选择模型')
+        st.subheader(f"📍 当前会话: {current_name}")
         
-        # --- 图表优化部分 ---
-        st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.markdown("### 📊 目标分类统计")
-        
-        counts = metrics['class_distribution']
-        if counts:
-            model = self.get_model()
-            class_names = model.class_names if model else []
+        if 'metrics' in st.session_state and st.session_state.metrics:
+            metrics = st.session_state.metrics.get_summary()
             
-            # 数据转换
-            named_counts = []
-            for cls_id, count in counts.items():
-                if class_names and 0 <= cls_id < len(class_names):
-                    name = class_names[cls_id]
+            # --- A. 关键指标卡片 ---
+            st.markdown('<div class="card">', unsafe_allow_html=True)
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("总计帧数", metrics['total_frames'])
+            with col2:
+                # 注意：这里使用的是 average_fps
+                st.metric("平均帧率", f"{metrics['average_fps']:.1f} FPS")
+            with col3:
+                st.metric("检测目标", metrics['total_detections'])
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            # --- B. 类别分布图 (保留你之前喜欢的横向柱状图) ---
+            st.markdown('<div class="card">', unsafe_allow_html=True)
+            st.markdown("### 🧬 目标类别分布 (当前)")
+            
+            counts = metrics['class_distribution']
+            if counts:
+                model = self.get_model()
+                class_names = model.class_names if model else []
+                
+                # 数据转换
+                named_counts = []
+                for cls_id, count in counts.items():
+                    if class_names and 0 <= cls_id < len(class_names):
+                        name = class_names[cls_id]
+                    else:
+                        name = f"Class {cls_id}"
+                    named_counts.append({"类别": name, "数量": count})
+                
+                chart_data = pd.DataFrame(named_counts)
+                
+                if not chart_data.empty:
+                    # 使用 Altair 画横向条形图
+                    bars = alt.Chart(chart_data).mark_bar().encode(
+                        x=alt.X('数量', title='检测数量'),
+                        y=alt.Y('类别', sort='-x', title=''), # 数量多的排上面
+                        color=alt.Color('类别', legend=None),
+                        tooltip=['类别', '数量']
+                    )
+                    
+                    text = bars.mark_text(
+                        align='left',
+                        baseline='middle',
+                        dx=3
+                    ).encode(
+                        text='数量'
+                    )
+                    
+                    final_chart = (bars + text).properties(height=300)
+                    st.altair_chart(final_chart, use_container_width=True)
                 else:
-                    name = f"Class {cls_id}"
-                named_counts.append({"类别": name, "数量": count})
-            
-            # 创建 DataFrame
-            chart_data = pd.DataFrame(named_counts)
-            
-            if not chart_data.empty:
-                # 使用 Altair 构建图表
-                bars = alt.Chart(chart_data).mark_bar().encode(
-                    x=alt.X('数量', title='检测数量'),
-                    y=alt.Y('类别', sort='-x', title=''),
-                    color=alt.Color('类别', legend=None),
-                    tooltip=['类别', '数量']
-                )
-                
-                text = bars.mark_text(
-                    align='left',
-                    baseline='middle',
-                    dx=3
-                ).encode(
-                    text='数量'
-                )
-                
-                final_chart = (bars + text).properties(height=300)
-                st.altair_chart(final_chart, use_container_width=True)
+                    st.info("暂无有效分类数据")
             else:
-                 st.info("暂无有效分类数据")
+                st.info("暂无分类统计数据")
+            st.markdown('</div>', unsafe_allow_html=True)
+
         else:
-            st.info("暂无分类统计数据")
+            st.info("👆 请先在左侧选择模型，并运行【视频】或【摄像头】检测以生成数据。")
+
+        st.markdown("---")
+        
+        # ==========================================
+        # 2️⃣ 第二部分：模型性能竞技场 (对比分析)
+        # ==========================================
+        st.subheader("🏆 模型性能竞技场")
+        st.caption("不同模型在当前运行期间的历史数据对比")
+        
+        # 检查是否有历史数据
+        if 'model_history' in st.session_state and len(st.session_state.model_history) > 0:
+            history = st.session_state.model_history
             
-        st.markdown('</div>', unsafe_allow_html=True)
+            # 将字典转换为 DataFrame
+            # 数据结构示例: [{'Model': 'YOLOv5', 'fps': 30, ...}, ...]
+            comp_data = []
+            for name, data in history.items():
+                row = data.copy()
+                row['Model'] = name  # 添加模型名称列
+                comp_data.append(row)
+            
+            df_comp = pd.DataFrame(comp_data)
+            
+            # --- C. 数据表格展示 ---
+            with st.expander("查看详细对比数据", expanded=True):
+                # 调整列顺序，让 Model 排第一
+                cols = ['Model', 'fps', 'total_detections', 'frames']
+                # 过滤掉不存在的列（防止报错）
+                display_cols = [c for c in cols if c in df_comp.columns]
+                st.dataframe(
+                    df_comp[display_cols].style.format({'fps': "{:.2f}"}), 
+                    use_container_width=True
+                )
+            
+            # --- D. 可视化对比图表 ---
+            c1, c2 = st.columns(2)
+            
+            # 左图：推理速度对比
+            with c1:
+                st.markdown("#### 🚀 推理速度 (FPS)")
+                chart_fps = alt.Chart(df_comp).mark_bar().encode(
+                    x=alt.X('Model', title='模型名称', axis=alt.Axis(labelAngle=0)),
+                    y=alt.Y('fps', title='帧率 (越高越好)'),
+                    color=alt.Color('Model', legend=None),
+                    tooltip=['Model', alt.Tooltip('fps', format='.1f')]
+                ).properties(height=300)
+                st.altair_chart(chart_fps, use_container_width=True)
+                
+            # 右图：检出能力对比
+            with c2:
+                st.markdown("#### 🎯 累计检出数量")
+                chart_count = alt.Chart(df_comp).mark_bar().encode(
+                    x=alt.X('Model', title='模型名称', axis=alt.Axis(labelAngle=0)),
+                    y=alt.Y('total_detections', title='检出总数'),
+                    color=alt.Color('Model', legend=None),
+                    tooltip=['Model', 'total_detections']
+                ).properties(height=300)
+                st.altair_chart(chart_count, use_container_width=True)
+                
+            # 清除历史数据的按钮
+            if st.button("🗑️ 清空对比历史"):
+                st.session_state.model_history = {}
+                st.rerun()
+                
+        else:
+            # 引导用户进行对比测试
+            st.info("💡 **如何进行对比？**\n\n"
+                    "1. 在左侧选择一个模型（如 YOLOv5），运行检测，然后停止。\n"
+                    "2. 切换另一个模型（如 YOLOv8），再次运行检测。\n"
+                    "3. 数据将自动汇聚于此进行 PK！")
 
 
     def process_image(self, image_file):
@@ -450,7 +557,20 @@ class StreamlitApp:
                     frame = visualizer.draw_detections(frame, detections)
                 
                 placeholder.image(frame)
+
+            if st.session_state.metrics and st.session_state.metrics.total_frames > 0:
+                summary = st.session_state.metrics.get_summary()
                 
+                # 保存到历史记录中
+                st.session_state.model_history[self.current_model_name] = {
+                    "fps": summary['average_fps'],
+                    "total_detections": summary['total_detections'],
+                    "frames": summary['total_frames'],
+                }
+                # 显示一个小弹窗提示成功
+                st.toast(f"✅ {self.current_model_name} 测试数据已保存！")    
+
+
         finally:
             cap.release()
             st.session_state.running = False
@@ -505,6 +625,17 @@ class StreamlitApp:
                     frame = visualizer.draw_detections(frame, detections)
                 
                 placeholder.image(frame)
+            
+            if st.session_state.metrics and st.session_state.metrics.total_frames > 0:
+                summary = st.session_state.metrics.get_summary()
+                
+                st.session_state.model_history[self.current_model_name] = {
+                    "fps": summary['average_fps'],
+                    "total_detections": summary['total_detections'],
+                    "frames": summary['total_frames'],
+                }
+                st.toast(f"✅ {self.current_model_name} 测试数据已保存！")
+
                 
         finally:
             cap.release()

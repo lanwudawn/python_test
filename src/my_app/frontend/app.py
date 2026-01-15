@@ -14,12 +14,46 @@ from ..utils.config_loader import load_config
 from ..reports.visualization import DetectionVisualizer
 from ..reports.metrics import DetectionMetrics
 
+import altair as alt
+
+@st.cache_resource
+def load_cached_model(config):
+    """
+    使用 cache_resource 缓存模型实例。
+    Streamlit 会检测 config 是否变化，只有变化时才会重新加载。
+    """
+    print("Loading model...")  # 调试用，你会发现它只打印一次
+    return YOLOModel(config)
+
+
 class StreamlitApp:
     def __init__(self):
         self.setup_page_config()
         self.config = load_config()
+        # 注意：这里我们不再在 __init__ 里强行加载模型，而是按需加载
         self.apply_custom_css()
         self.initialize_session_state()
+
+    def get_model(self):
+        """获取缓存的模型的辅助方法"""
+        return load_cached_model(self.config['model'])
+
+    def process_image(self, image_file):
+        """处理单张图片"""
+        # 使用缓存加载，非常快
+        model = self.get_model()
+        
+        image = Image.open(image_file)
+        image = np.array(image)
+        
+        # 这里的 predict 已经是优化过的方法
+        detections = model.predict(image)
+
+        visualizer = DetectionVisualizer(model.class_names) # 确保传入 class_names
+        
+        return visualizer.draw_detections(image, detections)
+
+
 
     def setup_page_config(self):
         """设置页面配置"""
@@ -293,42 +327,72 @@ class StreamlitApp:
         st.markdown('</div>', unsafe_allow_html=True)
 
     def render_analytics(self):
-        """渲染分析页面"""
-        if st.session_state.metrics:
-            metrics = st.session_state.metrics.get_summary()
+        """渲染分析页面（使用 Altair 优化图表）"""
+        if 'metrics' not in st.session_state or not st.session_state.metrics:
+            st.info("暂无数据，请先运行检测。")
+            return
+
+        metrics = st.session_state.metrics.get_summary()
+        
+        # 显示关键指标卡片
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("总计帧数", metrics['total_frames'])
+        with col2:
+            # 🟢 修正：使用 'average_fps' 而不是 'fps'
+            st.metric("平均帧率", f"{metrics['average_fps']:.1f} FPS")
+        with col3:
+            st.metric("检测目标", metrics['total_detections'])
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        # --- 图表优化部分 ---
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.markdown("### 📊 目标分类统计")
+        
+        counts = metrics['class_distribution']
+        if counts:
+            model = self.get_model()
+            class_names = model.class_names if model else []
             
-            # 显示关键指标
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                self.render_metric_card(
-                    "总计画幅",
-                    metrics['total_frames'],
-                    "🎞️"
-                )
-            with col2:
-                self.render_metric_card(
-                    "平均帧率",
-                    f"{metrics['average_fps']:.1f}",
-                    "⚡"
-                )
-            with col3:
-                self.render_metric_card(
-                    "检测目标",
-                    metrics['total_detections'],
-                    "🎯"
-                )
+            # 数据转换
+            named_counts = []
+            for cls_id, count in counts.items():
+                if class_names and 0 <= cls_id < len(class_names):
+                    name = class_names[cls_id]
+                else:
+                    name = f"Class {cls_id}"
+                named_counts.append({"类别": name, "数量": count})
             
-            # 显示图表
-            st.markdown('<div class="card">', unsafe_allow_html=True)
-            st.markdown("### 目标分类")
-            if metrics['class_distribution']:
-                chart_data = pd.DataFrame.from_dict(
-                    metrics['class_distribution'],
-                    orient='index',
-                    columns=['count']
+            # 创建 DataFrame
+            chart_data = pd.DataFrame(named_counts)
+            
+            if not chart_data.empty:
+                # 使用 Altair 构建图表
+                bars = alt.Chart(chart_data).mark_bar().encode(
+                    x=alt.X('数量', title='检测数量'),
+                    y=alt.Y('类别', sort='-x', title=''),
+                    color=alt.Color('类别', legend=None),
+                    tooltip=['类别', '数量']
                 )
-                st.bar_chart(chart_data)
-            st.markdown('</div>', unsafe_allow_html=True)
+                
+                text = bars.mark_text(
+                    align='left',
+                    baseline='middle',
+                    dx=3
+                ).encode(
+                    text='数量'
+                )
+                
+                final_chart = (bars + text).properties(height=300)
+                st.altair_chart(final_chart, use_container_width=True)
+            else:
+                 st.info("暂无有效分类数据")
+        else:
+            st.info("暂无分类统计数据")
+            
+        st.markdown('</div>', unsafe_allow_html=True)
+
 
     def process_image(self, image_file):
         """处理单张图片"""
@@ -346,11 +410,10 @@ class StreamlitApp:
     def run_camera_detection(self, camera_id, placeholder):
         """运行摄像头检测"""
         cap = cv2.VideoCapture(camera_id)
-        visualizer = DetectionVisualizer()
         
-        if st.session_state.model is None:
-            st.session_state.model = YOLOModel(self.config['model'])
+        model = self.get_model()
         
+        visualizer = DetectionVisualizer(model.class_names)
         # 创建两列布局用于开始和停止按钮
         col1, col2 = st.columns(2)
         
@@ -361,19 +424,28 @@ class StreamlitApp:
             
         if start_button:
             st.session_state.running = True
-            
+            st.session_state.metrics.reset()
+
         if stop_button:
             st.session_state.running = False
             
         try:
             while st.session_state.running:
+                start_time = time.time()
+
                 ret, frame = cap.read()
                 if not ret:
+                    st.warning("无法读取摄像头画面")
                     break
                 
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                detections = st.session_state.model.predict(frame)
                 
+                detections = model.predict(frame)
+
+                process_time = time.time() - start_time
+                if st.session_state.metrics:
+                    st.session_state.metrics.update(detections, process_time)
+
                 if detections is not None:
                     frame = visualizer.draw_detections(frame, detections)
                 
@@ -389,11 +461,15 @@ class StreamlitApp:
         tfile.write(video_file.read())
         
         cap = cv2.VideoCapture(tfile.name)
-        visualizer = DetectionVisualizer()
         
+        model = self.get_model()
+        
+        visualizer = DetectionVisualizer(model.class_names)
+
         if st.session_state.model is None:
             st.session_state.model = YOLOModel(self.config['model'])
-        
+    
+
         # 创建两列布局用于开始和停止按钮
         col1, col2 = st.columns(2)
         
@@ -404,12 +480,16 @@ class StreamlitApp:
             
         if start_button:
             st.session_state.running = True
-            
+            st.session_state.metrics.reset()
+
         if stop_button:
             st.session_state.running = False
             
         try:
             while st.session_state.running:
+
+                start_time = time.time()
+
                 ret, frame = cap.read()
                 if not ret:
                     break
@@ -417,6 +497,10 @@ class StreamlitApp:
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 detections = st.session_state.model.predict(frame)
                 
+                process_time = time.time() - start_time
+                if st.session_state.metrics:
+                    st.session_state.metrics.update(detections, process_time)
+
                 if detections is not None:
                     frame = visualizer.draw_detections(frame, detections)
                 

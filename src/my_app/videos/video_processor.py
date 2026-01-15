@@ -11,13 +11,16 @@ class VideoProcessor:
         self.detector = detector
         self.logger = logging.getLogger(__name__)
         
-        # 初始化可视化工具
-        class_names = self._load_class_names()
+        # 优化：优先从 detector 对象获取 class_names，减少 IO
+        if hasattr(detector, 'class_names') and detector.class_names:
+            class_names = detector.class_names
+        else:
+            class_names = self._load_class_names()
+            
         self.visualizer = DetectionVisualizer(class_names)
-        
-        # 初始化指标收集器
-        self.metrics = DetectionMetrics() if config['metrics']['enabled'] else None
-        
+
+
+
     def _load_class_names(self):
         """加载类别名称"""
         try:
@@ -70,19 +73,16 @@ class VideoProcessor:
             (width, height)
         )
         
-    def _process_frames(self, cap, out):
-        """处理视频帧"""
+def _process_frames(self, cap, out):
         frame_count = 0
-        
         while True:
             start_time = time.time()
             ret, frame = cap.read()
-            
             if not ret:
                 break
                 
-            # 执行检测
-            detections = self.detector.detect(frame)
+            # 修复：方法名调用修正 predict()
+            detections = self.detector.predict(frame)
             
             if detections is not None:
                 # 绘制检测结果

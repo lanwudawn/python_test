@@ -73,7 +73,7 @@ class VideoProcessor:
             (width, height)
         )
         
-def _process_frames(self, cap, out):
+    def _process_frames(self, cap, out):
         frame_count = 0
         while True:
             start_time = time.time()
